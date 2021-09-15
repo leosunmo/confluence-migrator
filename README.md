@@ -9,6 +9,10 @@ Confluence's built in Export tool (to XML) works well enough, as you can select 
 Build it and use flags or config file to move pages.
 
 ```
+go build .
+```
+
+```
 Usage of ./confluence-migrator:
   -c, --config string            YAML Configuration file. Full path and extension
       --conflictsuffix string    String to append to page titles that already exist in the destination space (default "- import")
