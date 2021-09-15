@@ -78,3 +78,10 @@ dest:
   spaceKey: OPS
 ```
 `$ ./confluence-migrator -s my-secret-token123 -d my-other-token456 -r -c config.yaml`
+
+## TODO
+
+* Figure out if we can migrate user that created the page in source.  
+  This is a bit tricky as Atlassian changed how the User API works and it now requires some new global Atlassian User ID, which none of the users I tested with had.
+* Maintain comments and history.  
+  This is totally possible with the current state of the REST API. Without solving the user issue above first, this will just be a mess however.
