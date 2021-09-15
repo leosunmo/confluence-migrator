@@ -12,9 +12,11 @@ import (
 )
 
 type Client struct {
-	SourceClient   *goconfluence.API
-	DestClient     *goconfluence.API
-	ConflictSuffix string
+	SourceClient       *goconfluence.API
+	DestClient         *goconfluence.API
+	ConflictSuffix     string
+	SourceContentQuery goconfluence.ContentQuery
+	DestContentQuery   goconfluence.ContentQuery
 }
 
 type Config struct {
@@ -29,6 +31,11 @@ type LocationConfig struct {
 	Token    string `mapstructure:"token"`
 	PageId   string `mapstructure:"pageid"`
 	SpaceKey string `mapstructure:"spacekey"`
+}
+
+type contentNode struct {
+	content  *goconfluence.Content
+	children []contentNode
 }
 
 func main() {
@@ -136,22 +143,21 @@ func main() {
 	}
 
 	goconfluence.DebugFlag = *debug
-	sourceCQ := goconfluence.ContentQuery{
+	c.SourceContentQuery = goconfluence.ContentQuery{
 		SpaceKey: conf.Source.SpaceKey,
 		Type:     "page",
 		Expand:   []string{"space", "body.storage", "version", "ancestors", "descendants"},
 	}
 
-	destCQ := goconfluence.ContentQuery{
+	c.DestContentQuery = goconfluence.ContentQuery{
 		SpaceKey: conf.Destination.SpaceKey,
 		Type:     "page",
 		Expand:   []string{"space", "body.storage", "version", "ancestors", "descendants"},
 	}
 
 	if conf.Destination.PageId != "" {
-		// Get destination page first to make sure it exists, and to grab its
-		// ancestry for later.
-		destContent, err := c.DestClient.GetContentByID(conf.Destination.PageId, destCQ)
+		// Get destination page first to make sure it exists
+		destContent, err := c.DestClient.GetContentByID(conf.Destination.PageId, c.DestContentQuery)
 		if err != nil {
 			log.Fatalf("failed to get destination page #%s, %s\n", conf.Destination.PageId, err)
 		}
@@ -162,29 +168,18 @@ func main() {
 	}
 
 	// Start grabbing the parent source page
-	content, err := c.SourceClient.GetContentByID(conf.Source.PageId, sourceCQ)
+	rootContent, err := c.SourceClient.GetContentByID(conf.Source.PageId, c.SourceContentQuery)
 	if err != nil {
 		log.Fatal(err)
 	}
+	rootNode := &contentNode{
+		content: rootContent,
+	}
 
-	var childContent []*goconfluence.Content
 	if *recursive {
-		// Grab any child pages from parent
-		childPages, err := c.SourceClient.GetChildPages(conf.Source.PageId)
+		err := c.getChildContent(rootNode)
 		if err != nil {
 			log.Fatal(err)
-		}
-
-		if len(childPages.Results) != 0 {
-			for _, page := range childPages.Results {
-				if page.Type == "page" {
-					content, err := c.SourceClient.GetContentByID(page.ID, sourceCQ)
-					if err != nil {
-						log.Fatalf("failed to get child content, pageID #%s, %s\n", page.ID, err)
-					}
-					childContent = append(childContent, content)
-				}
-			}
 		}
 	}
 
@@ -194,23 +189,58 @@ func main() {
 		parentAncestry = buildAncestry([]string{conf.Destination.PageId})
 	}
 
-	newContent := c.generateNewContent(content, parentAncestry, conf.Destination.SpaceKey)
-	respContent, err := c.DestClient.CreateContent(newContent)
+	err = c.createContent(rootNode, parentAncestry, conf.Destination.SpaceKey)
 	if err != nil {
-		log.Fatalf("failed to create new parent page, %s\n", err)
+		log.Fatal(err)
+	}
+}
+
+func (c *Client) getChildContent(rootNode *contentNode) error {
+	// Grab any child pages from parent
+	childPages, err := c.SourceClient.GetChildPages(rootNode.content.ID)
+	if err != nil {
+		return fmt.Errorf("failed to retrieve list of child pages for pageID %s: %w", rootNode.content.ID, err)
 	}
 
-	if len(childContent) != 0 {
-		// Create child pages in new location
-		for _, cc := range childContent {
-			childAncestor := buildAncestry([]string{respContent.ID})
-			_, err := c.DestClient.CreateContent(c.generateNewContent(cc, childAncestor, conf.Destination.SpaceKey))
-			if err != nil {
-				log.Fatalf("failed to create new child page #%s: %s\n", cc.ID, err)
+	if len(childPages.Results) != 0 {
+		for _, page := range childPages.Results {
+			if page.Type == "page" {
+				content, err := c.SourceClient.GetContentByID(page.ID, c.SourceContentQuery)
+				if err != nil {
+					return fmt.Errorf("failed to get content from pageID %s, child of %s: %w", page.ID, rootNode.content.ID, err)
+				}
+				childNode := contentNode{
+					content: content,
+				}
+				err = c.getChildContent(&childNode)
+				if err != nil {
+					return err
+				}
+				rootNode.children = append(rootNode.children, childNode)
 			}
 		}
 	}
+	return nil
+}
 
+func (c *Client) createContent(rootNode *contentNode, parentAncestry []goconfluence.Ancestor, spaceKey string) error {
+	newContent := c.generateNewContent(rootNode.content, parentAncestry, spaceKey)
+	respContent, err := c.DestClient.CreateContent(newContent)
+	if err != nil {
+		return fmt.Errorf("failed to create new page %q: %w", rootNode.content.Title, err)
+	}
+
+	if len(rootNode.children) != 0 {
+		// Create child pages in new location
+		for _, cn := range rootNode.children {
+			childAncestor := buildAncestry([]string{respContent.ID})
+			err := c.createContent(&cn, childAncestor, spaceKey)
+			if err != nil {
+				return fmt.Errorf("failed to create new child page %q: %w", cn.content.Title, err)
+			}
+		}
+	}
+	return nil
 }
 
 func (c *Client) generateNewContent(sourceContent *goconfluence.Content, newAncestry []goconfluence.Ancestor, newSpaceKey string) *goconfluence.Content {
