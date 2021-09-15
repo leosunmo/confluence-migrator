@@ -3,7 +3,7 @@ Confluence page migration/copying tool.
 Copy pages (and their children) to a new parent page, new Space, or even a new Confluence account.
 
 ## Why
-Confluence's built in Export tool (to XML) works well enough, as you can select which pages you want to export. I cannot for the life of my find a nice way to _IMPORT_ these XML files again. The only option seems to be a full "restore from backup" procedure which seems overkill. So instead I went overkill and wrote this mess in anger.
+Confluence's built in Export tool (to XML) works well enough, as you can select which pages you want to export. I cannot for the life of me find a nice way to _IMPORT_ these XML files again. The only option seems to be a full "restore from backup" procedure which seems overkill. So instead I went overkill and wrote this mess in anger.
 
 ## Usage
 Build it and use flags or config file to move pages.
